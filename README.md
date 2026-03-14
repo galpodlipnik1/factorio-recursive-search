@@ -14,19 +14,21 @@ A [Factorio](https://www.factorio.com/) mod (v2.0+) that adds a recursive search
 ## Installation
 
 ### From the Factorio Mod Portal
+
 Search for **Recursive Blueprint Finder** in the in-game mod browser or on the [Factorio Mod Portal](https://mods.factorio.com/).
 
 ### Manual
+
 1. Download or clone this repository.
 2. Copy the folder into your Factorio `mods/` directory.
 3. Launch Factorio and enable the mod.
 
 ## Usage
 
-| Action | Default binding |
-|---|---|
+| Action                   | Default binding                                    |
+| ------------------------ | -------------------------------------------------- |
 | Toggle the search window | `rbf-toggle` (configurable in Settings → Controls) |
-| Shortcut bar button | Click **Recursive Blueprint Finder** |
+| Shortcut bar button      | Click **Recursive Blueprint Finder**               |
 
 - Type part of a blueprint or book name to filter results.
 - Click a result row to select it, then use **Open** or **Paste**.
