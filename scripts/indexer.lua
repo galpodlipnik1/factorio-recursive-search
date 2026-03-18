@@ -7,6 +7,8 @@ local util = require("scripts.util")
 local M = {}
 local BUILD_BATCH_SIZE = 100
 local LABEL_BATCH_SIZE = 1
+local PRIORITY_LIMIT = 30
+local FALLBACK_NAME_MAX = 48
 
 local function is_readable_record(record)
   return record
@@ -15,12 +17,39 @@ local function is_readable_record(record)
     and (record.type == "blueprint" or record.type == "blueprint-book")
 end
 
+local function safe_destroy_inventory(inventory)
+  if inventory and inventory.valid then
+    inventory.destroy()
+  end
+end
+
 local function build_search_text(name, description, breadcrumb)
-  return util.normalize(table.concat({
-    name or "",
-    description or "",
-    breadcrumb or ""
-  }, " "))
+  return util.build_search_text(name, description, breadcrumb)
+end
+
+local function read_direct_label(record)
+  local ok, label = pcall(function()
+    return record.label
+  end)
+
+  if not ok then
+    return ""
+  end
+
+  return util.trim(label)
+end
+
+local function description_name_fallback(record_type, description)
+  local compact = util.trim(description):gsub("[%r%n]+", " ")
+  if compact == "" then
+    return util.fallback_name_text(record_type)
+  end
+
+  if #compact > FALLBACK_NAME_MAX then
+    compact = compact:sub(1, FALLBACK_NAME_MAX - 3) .. "..."
+  end
+
+  return compact
 end
 
 local function create_temp_stack_from_record(record)
@@ -42,8 +71,8 @@ local function create_temp_stack_from_record(record)
 
   local inventory = game.create_inventory(1)
   local stack = inventory[1]
-  if not stack then
-    inventory.destroy()
+  if not (stack and stack.valid) then
+    safe_destroy_inventory(inventory)
     logger.info("index.metadata-stack-missing", {
       record_type = record and record.type or nil
     })
@@ -54,8 +83,8 @@ local function create_temp_stack_from_record(record)
     stack.import_stack(export_string)
   end)
 
-  if not ok then
-    inventory.destroy()
+  if not ok or not stack.valid_for_read then
+    safe_destroy_inventory(inventory)
     logger.info("index.metadata-import-failed", {
       record_type = record and record.type or nil
     })
@@ -71,17 +100,25 @@ local function resolve_label_metadata(record, fallback_name, fallback_descriptio
     description = fallback_description or ""
   end
 
+  local direct_name = read_direct_label(record)
+  if direct_name ~= "" then
+    return direct_name, description
+  end
+
   local inventory, stack = create_temp_stack_from_record(record)
   if not inventory then
     return fallback_name, description
   end
 
-  local name = util.trim(stack and stack.label)
+  local ok, label = pcall(function()
+    return stack.label
+  end)
+  local name = ok and util.trim(label) or ""
   if name == "" then
     name = fallback_name
   end
 
-  inventory.destroy()
+  safe_destroy_inventory(inventory)
   return name, description
 end
 
@@ -160,8 +197,9 @@ local function queue_root_tasks(player)
 end
 
 local function append_entry(index_state, task, record)
-  local name = util.fallback_name_text(record.type)
   local description = util.trim(record.blueprint_description)
+  local direct_name = read_direct_label(record)
+  local name = direct_name ~= "" and direct_name or description_name_fallback(record.type, description)
   local breadcrumbs = util.copy_array(task.breadcrumbs)
   breadcrumbs[#breadcrumbs + 1] = name
 
@@ -178,7 +216,7 @@ local function append_entry(index_state, task, record)
     search_description = util.normalize(description),
     search_breadcrumb = util.normalize(table.concat(breadcrumbs, " / ")),
     search_text = build_search_text(name, description, table.concat(breadcrumbs, " / ")),
-    label_resolved = false,
+    label_resolved = direct_name ~= "",
     child_path_keys = {}
   }
 
@@ -223,10 +261,18 @@ local function start_label_resolution(index_state)
   index_state.priority_label_queue = {}
   index_state.priority_label_set = {}
   index_state.resolving_labels = #index_state.entries > 0
-  index_state.labels_remaining = #index_state.entries
+  index_state.labels_remaining = 0
 
   for index = 1, #index_state.entries do
-    index_state.label_queue[index] = index_state.entries[index].path_key
+    local entry = index_state.entries[index]
+    if not entry.label_resolved then
+      index_state.label_queue[#index_state.label_queue + 1] = entry.path_key
+      index_state.labels_remaining = index_state.labels_remaining + 1
+    end
+  end
+
+  if index_state.labels_remaining == 0 then
+    clear_label_job(index_state)
   end
 end
 
@@ -254,8 +300,8 @@ local function enqueue_priority_path(index_state, path_key)
   index_state.priority_label_queue[#index_state.priority_label_queue + 1] = path_key
 end
 
-local function next_label_path(index_state)
-  while #index_state.priority_label_queue > 0 do
+local function next_label_path(index_state, allow_background)
+  while index_state.priority_label_queue and #index_state.priority_label_queue > 0 do
     local path_key = table.remove(index_state.priority_label_queue, 1)
     index_state.priority_label_set[path_key] = nil
 
@@ -263,6 +309,10 @@ local function next_label_path(index_state)
     if entry and not entry.label_resolved then
       return path_key, true
     end
+  end
+
+  if not allow_background then
+    return nil, false
   end
 
   while index_state.label_queue and index_state.label_cursor <= #index_state.label_queue do
@@ -394,7 +444,7 @@ function M.process_rebuild_batch(player, max_records)
   return false
 end
 
-function M.process_label_batch(player, max_records)
+function M.process_label_batch(player, max_records, allow_background)
   local player_state = state.ensure_player_state(player.index)
   local index_state = player_state.index
   local limit = max_records or LABEL_BATCH_SIZE
@@ -407,10 +457,14 @@ function M.process_label_batch(player, max_records)
   local processed = 0
 
   while processed < limit do
-    local path_key, prioritized = next_label_path(index_state)
+    local path_key, prioritized = next_label_path(index_state, allow_background)
     if not path_key then
-      clear_label_job(index_state)
-      logger.player(player, "index.label-warmup-finished")
+      if (not index_state.priority_label_queue or #index_state.priority_label_queue == 0)
+        and index_state.label_queue
+        and index_state.label_cursor > #index_state.label_queue then
+        clear_label_job(index_state)
+        logger.player(player, "index.label-warmup-finished")
+      end
       break
     end
 
@@ -445,7 +499,8 @@ function M.prioritize_entries(player, entries)
     return
   end
 
-  for index = 1, #entries do
+  local limit = math.min(#entries, PRIORITY_LIMIT)
+  for index = 1, limit do
     local current = entries[index]
     local path_key = current.path_key
 

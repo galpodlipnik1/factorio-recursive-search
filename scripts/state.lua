@@ -31,6 +31,66 @@ local function new_player_state()
   }
 end
 
+local function migrate_from_fast_index(player_state)
+  if player_state.index ~= nil then
+    return
+  end
+
+  local fast_index = player_state.fast_index or {}
+  local ui_state = player_state.ui_state or {}
+
+  player_state.index = {
+    entries = fast_index.entries or {},
+    entry_map = fast_index.entry_map or {},
+    entry_count = fast_index.entry_count or #(fast_index.entries or {}),
+    last_rebuild_tick = fast_index.last_built_tick,
+    dirty = fast_index.state == "stale" or fast_index.state == "empty" or fast_index.state == nil,
+    rebuilding = fast_index.state == "building",
+    resolving_labels = false,
+    labels_remaining = 0,
+    rebuild_revision = fast_index.rebuild_revision or 0,
+    job_revision = fast_index.job_revision,
+    pending_entries = fast_index.pending_entries,
+    pending_entry_map = fast_index.pending_entry_map,
+    pending_tasks = fast_index.pending_tasks,
+    job_cursor = fast_index.job_cursor or 1,
+    label_queue = nil,
+    label_cursor = 1,
+    priority_label_queue = nil,
+    priority_label_set = nil
+  }
+
+  player_state.ui = {
+    open = ui_state.open == true,
+    query = ui_state.query or "",
+    mode = ui_state.mode or "search",
+    browse_path_key = ui_state.browse_path_key
+  }
+
+  player_state.fast_index = nil
+  player_state.ui_state = nil
+  player_state.deep_index = nil
+  player_state.dirty_flags = nil
+end
+
+local function normalize_entry(entry)
+  if not entry then
+    return nil
+  end
+
+  entry.name = entry.name or entry.fallback_name or ""
+  entry.description = entry.description or ""
+  entry.breadcrumb = entry.breadcrumb or entry.name or ""
+  entry.search_name = entry.search_name or ""
+  entry.search_description = entry.search_description or ""
+  entry.search_breadcrumb = entry.search_breadcrumb or ""
+  entry.search_text = entry.search_text or ""
+  entry.label_resolved = entry.label_resolved == true
+  entry.child_path_keys = entry.child_path_keys or {}
+
+  return entry
+end
+
 local function ensure_index_shape(index_state)
   index_state.entries = index_state.entries or {}
   index_state.entry_map = index_state.entry_map or {}
@@ -51,14 +111,20 @@ local function ensure_index_shape(index_state)
   index_state.priority_label_queue = index_state.priority_label_queue
   index_state.priority_label_set = index_state.priority_label_set
 
+  for index = 1, #index_state.entries do
+    index_state.entries[index] = normalize_entry(index_state.entries[index])
+  end
+
   if next(index_state.entry_map) == nil and #index_state.entries > 0 then
     for index = 1, #index_state.entries do
       local entry = index_state.entries[index]
       if entry and entry.path_key then
-        entry.child_path_keys = entry.child_path_keys or {}
-        entry.label_resolved = entry.label_resolved == true
         index_state.entry_map[entry.path_key] = entry
       end
+    end
+  else
+    for path_key, entry in pairs(index_state.entry_map) do
+      index_state.entry_map[path_key] = normalize_entry(entry)
     end
   end
 end
@@ -71,6 +137,7 @@ local function ensure_ui_shape(ui_state)
 end
 
 local function normalize_player_state(player_state)
+  migrate_from_fast_index(player_state)
   player_state.index = player_state.index or {}
   player_state.ui = player_state.ui or {}
 
@@ -103,8 +170,14 @@ function M.mark_index_dirty(player_index)
   local player_state = M.ensure_player_state(player_index)
   player_state.index.rebuild_revision = player_state.index.rebuild_revision + 1
   player_state.index.dirty = true
+  player_state.index.rebuilding = false
   player_state.index.resolving_labels = false
   player_state.index.labels_remaining = 0
+  player_state.index.pending_entries = nil
+  player_state.index.pending_entry_map = nil
+  player_state.index.pending_tasks = nil
+  player_state.index.job_cursor = 1
+  player_state.index.job_revision = nil
   player_state.index.label_queue = nil
   player_state.index.label_cursor = 1
   player_state.index.priority_label_queue = nil

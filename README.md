@@ -7,7 +7,8 @@ A [Factorio](https://www.factorio.com/) mod (v2.0+) that adds a recursive search
 - Full-text search across all blueprints and blueprint books, including deeply nested ones
 - Browse into any book to see its direct children
 - One-click open or paste of any result
-- Background index building — search is available immediately, names warm up progressively
+- Lazy rebuilds on open or manual refresh
+- Title warmup while the search window is open, with visible results prioritized first
 - Status bar showing entry count, match count, index state, and last rebuild time
 - Keyboard-friendly: `Enter` selects the first result, `Esc` closes the window
 

@@ -3,6 +3,12 @@ local logger = require("scripts.logger")
 
 local M = {}
 
+local function destroy_inventory(inventory)
+  if inventory and inventory.valid then
+    inventory.destroy()
+  end
+end
+
 function M.place_record(player, record)
   if not (player and player.valid and record and record.valid) then
     logger.player(player, "placement.invalid-arguments", {
@@ -32,8 +38,8 @@ function M.place_record(player, record)
 
   local inventory = game.create_inventory(1)
   local stack = inventory[1]
-  if not stack then
-    inventory.destroy()
+  if not (stack and stack.valid) then
+    destroy_inventory(inventory)
     logger.player(player, "placement.stack-missing")
     return false
   end
@@ -43,16 +49,29 @@ function M.place_record(player, record)
   end)
 
   if not ok then
-    inventory.destroy()
+    destroy_inventory(inventory)
     logger.player(player, "placement.import-failed")
     return false
   end
 
-  player.clear_cursor()
-  player.add_to_clipboard(stack)
-  player.activate_paste()
+  if not stack.valid_for_read then
+    destroy_inventory(inventory)
+    logger.player(player, "placement.import-empty")
+    return false
+  end
 
-  inventory.destroy()
+  ok = pcall(function()
+    player.clear_cursor()
+    player.add_to_clipboard(stack)
+    player.activate_paste()
+  end)
+
+  destroy_inventory(inventory)
+  if not ok then
+    logger.player(player, "placement.clipboard-failed")
+    return false
+  end
+
   logger.player(player, "placement.completed")
   return true
 end

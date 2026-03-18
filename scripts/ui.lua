@@ -19,7 +19,8 @@ M.names = {
 }
 M.shortcut_name = "rbf-shortcut"
 
-local MAX_RESULTS = 100
+local MAX_RESULTS = 30
+local MIN_QUERY_LENGTH = 2
 
 local function get_frame(player)
   return player.gui.screen[M.names.frame]
@@ -31,6 +32,13 @@ local function get_results_model(player)
 
   if player_state.ui.mode == "browse" and player_state.ui.browse_path_key then
     return search.children(entries, player_state.ui.browse_path_key, MAX_RESULTS)
+  end
+
+  if #util.normalize(player_state.ui.query) < MIN_QUERY_LENGTH then
+    return {
+      matches = {},
+      total_matches = 0
+    }
   end
 
   return search.query(entries, player_state.ui.query, MAX_RESULTS)
@@ -296,10 +304,19 @@ function M.refresh(player)
     return
   end
 
-  if player_state.ui.mode == "search" and util.normalize(player_state.ui.query) == "" then
+  local normalized_query = util.normalize(player_state.ui.query)
+  if player_state.ui.mode == "search" and normalized_query == "" then
     scroll_pane.add({
       type = "label",
       caption = {"rbf.empty-query"}
+    })
+    return
+  end
+
+  if player_state.ui.mode == "search" and #normalized_query < MIN_QUERY_LENGTH then
+    scroll_pane.add({
+      type = "label",
+      caption = {"rbf.short-query", tostring(MIN_QUERY_LENGTH)}
     })
     return
   end

@@ -18,6 +18,14 @@ function M.normalize(value)
   return lowered:gsub("[%s\r\n\t]+", " ")
 end
 
+function M.build_search_text(name, description, breadcrumb)
+  return M.normalize(table.concat({
+    name or "",
+    description or "",
+    breadcrumb or ""
+  }, " "))
+end
+
 function M.copy_array(values)
   local out = {}
   for index = 1, #values do
@@ -39,6 +47,14 @@ function M.fallback_name_text(record_type)
 end
 
 function M.find_entry(entries, path_key)
+  if not entries then
+    return nil
+  end
+
+  if entries[path_key] then
+    return entries[path_key]
+  end
+
   for index = 1, #entries do
     if entries[index].path_key == path_key then
       return entries[index]

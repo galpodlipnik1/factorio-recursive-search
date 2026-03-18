@@ -163,6 +163,8 @@ function M.on_toggle_hotkey(event)
 
   if should_run_initial_rebuild(player_state) then
     ensure_rebuild_started(player, false)
+  elseif player_state.index.dirty then
+    ensure_rebuild_started(player, false)
   end
 
   logger.player(player, "ui.toggle-open", {
@@ -202,8 +204,12 @@ function M.on_tick()
         if player_state.ui.open and was_rebuilding and not player_state.index.rebuilding then
           ui.refresh(player)
         end
-      elseif indexer.process_label_batch(player) and player_state.ui.open then
-        ui.refresh(player)
+      elseif player_state.ui.open then
+        local query = util.normalize(player_state.ui.query)
+        local allow_background = player_state.ui.mode == "browse" or query ~= ""
+        if indexer.process_label_batch(player, nil, allow_background) then
+          ui.refresh(player)
+        end
       end
     end
   end
@@ -308,6 +314,10 @@ function M.on_gui_confirmed(event)
   end
 
   local player_state = state.get_player_state(player.index)
+  if #util.normalize(player_state.ui.query) < 2 then
+    return
+  end
+
   local model = search.query(player_state.index.entries, player_state.ui.query, 1)
   logger.player(player, "ui.query-confirmed", {
     query = player_state.ui.query,

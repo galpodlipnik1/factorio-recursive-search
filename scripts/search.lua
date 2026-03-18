@@ -3,19 +3,27 @@ local util = require("scripts.util")
 local M = {}
 
 local function rank_entry(entry, query)
-  if entry.search_name:find(query, 1, true) == 1 then
+  if entry.search_name == query then
     return 1
   end
 
-  if entry.search_name:find(query, 1, true) then
+  if entry.search_name:find(query, 1, true) == 1 then
     return 2
   end
 
-  if entry.search_description:find(query, 1, true) then
+  if entry.search_name:find(query, 1, true) then
     return 3
   end
 
-  return 4
+  if entry.search_description:find(query, 1, true) then
+    return 4
+  end
+
+  if entry.search_breadcrumb:find(query, 1, true) then
+    return 5
+  end
+
+  return 6
 end
 
 function M.query(entries, query, max_results)
