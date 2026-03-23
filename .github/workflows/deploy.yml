@@ -1,0 +1,37 @@
+name: deploy-rbf-api
+
+on:
+  push:
+    branches:
+      - boss-of-convolution
+    paths-ignore:
+      - "deploy/helm/values.yaml"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: boss-of-convolution
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run deploy script
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+          GIT_BRANCH: boss-of-convolution
+        run: |
+          chmod +x deploy/deploy.sh
+          ./deploy/deploy.sh

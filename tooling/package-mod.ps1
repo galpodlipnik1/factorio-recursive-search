@@ -30,8 +30,13 @@ New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $modsDir -Force | Out-Null
 
 try {
-    Get-ChildItem -LiteralPath $repoRoot -Force | Where-Object { $_.Name -ne '.git' } | ForEach-Object {
+    Get-ChildItem -LiteralPath $repoRoot -Force | Where-Object { $_.Name -notin @('.git', 'server', 'deploy', '.github', 'tooling') -and $_.Name -notlike '*.zip' } | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $stageRoot -Recurse -Force
+    }
+
+    $generatedIndex = Join-Path $stageRoot 'generated\index.lua'
+    if (Test-Path -LiteralPath $generatedIndex) {
+        Remove-Item -LiteralPath $generatedIndex -Force
     }
 
     if (Test-Path -LiteralPath $zipPath) {

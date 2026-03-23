@@ -3,6 +3,18 @@
 
 local M = {}
 
+local function path_key(path)
+  return table.concat(path or {}, ".")
+end
+
+local function copy_array(values)
+  local out = {}
+  for index = 1, #(values or {}) do
+    out[index] = values[index]
+  end
+  return out
+end
+
 local function new_player_state()
   return {
     index = {
@@ -23,7 +35,8 @@ local function new_player_state()
       label_queue = nil,
       label_cursor = 1,
       priority_label_queue = nil,
-      priority_label_set = nil
+      priority_label_set = nil,
+      source = "runtime"
     },
     ui = {
       open = false,
@@ -61,14 +74,16 @@ local function migrate_from_fast_index(player_state)
     label_queue = nil,
     label_cursor = 1,
     priority_label_queue = nil,
-    priority_label_set = nil
+    priority_label_set = nil,
+    source = "runtime"
   }
 
   player_state.ui = {
     open = ui_state.open == true,
     query = ui_state.query or "",
     mode = ui_state.mode or "search",
-    browse_path_key = ui_state.browse_path_key
+    browse_path_key = ui_state.browse_path_key,
+    layout = ui_state.layout or "compact"
   }
 
   player_state.fast_index = nil
@@ -82,6 +97,10 @@ local function normalize_entry(entry)
     return nil
   end
 
+  entry.path = copy_array(entry.path or {})
+  entry.path_key = entry.path_key or path_key(entry.path)
+  entry.parent_path_key = entry.parent_path_key
+  entry.record_type = entry.record_type or entry.type or "blueprint"
   entry.name = entry.name or entry.fallback_name or ""
   entry.description = entry.description or ""
   entry.breadcrumb = entry.breadcrumb or entry.name or ""
@@ -89,14 +108,41 @@ local function normalize_entry(entry)
   entry.search_description = entry.search_description or ""
   entry.search_breadcrumb = entry.search_breadcrumb or ""
   entry.search_text = entry.search_text or ""
-  entry.label_resolved = entry.label_resolved == true
+  entry.label_resolved = entry.label_resolved ~= false
   entry.child_path_keys = entry.child_path_keys or {}
-  -- icon_sprite: nil = not yet resolved, false = resolved (no custom icon), string = resolved (has icon)
-  if entry.icon_sprite == true then entry.icon_sprite = nil end
+  if entry.icon_sprite == true then
+    entry.icon_sprite = nil
+  end
   entry.entity_count = entry.entity_count or 0
   entry.tags = entry.tags or {}
 
   return entry
+end
+
+local function rebuild_entry_map(index_state)
+  index_state.entry_map = {}
+
+  for index = 1, #index_state.entries do
+    local entry = index_state.entries[index]
+    if entry and entry.path_key then
+      index_state.entry_map[entry.path_key] = entry
+    end
+  end
+
+  for index = 1, #index_state.entries do
+    local entry = index_state.entries[index]
+    entry.child_path_keys = {}
+  end
+
+  for index = 1, #index_state.entries do
+    local entry = index_state.entries[index]
+    if entry.parent_path_key then
+      local parent = index_state.entry_map[entry.parent_path_key]
+      if parent then
+        parent.child_path_keys[#parent.child_path_keys + 1] = entry.path_key
+      end
+    end
+  end
 end
 
 local function ensure_index_shape(index_state)
@@ -118,23 +164,14 @@ local function ensure_index_shape(index_state)
   index_state.label_cursor = index_state.label_cursor or 1
   index_state.priority_label_queue = index_state.priority_label_queue
   index_state.priority_label_set = index_state.priority_label_set
+  index_state.source = index_state.source or "runtime"
 
   for index = 1, #index_state.entries do
     index_state.entries[index] = normalize_entry(index_state.entries[index])
   end
 
-  if next(index_state.entry_map) == nil and #index_state.entries > 0 then
-    for index = 1, #index_state.entries do
-      local entry = index_state.entries[index]
-      if entry and entry.path_key then
-        index_state.entry_map[entry.path_key] = entry
-      end
-    end
-  else
-    for path_key, entry in pairs(index_state.entry_map) do
-      index_state.entry_map[path_key] = normalize_entry(entry)
-    end
-  end
+  rebuild_entry_map(index_state)
+  index_state.entry_count = #index_state.entries
 end
 
 local function ensure_ui_shape(ui_state)
@@ -175,6 +212,63 @@ function M.get_player_state(player_index)
   return M.ensure_player_state(player_index)
 end
 
+function M.has_usable_index(player_index)
+  local player_state = M.ensure_player_state(player_index)
+  return player_state.index.entry_count > 0 and player_state.index.dirty == false
+end
+
+function M.apply_prebuilt_index(player_index, payload)
+  if type(payload) ~= "table" then
+    return false, 0
+  end
+
+  local entries = payload.entries
+  if type(entries) ~= "table" then
+    entries = payload
+  end
+
+  if type(entries) ~= "table" then
+    return false, 0
+  end
+
+  local player_state = M.ensure_player_state(player_index)
+  local index_state = player_state.index
+  local normalized_entries = {}
+
+  for index = 1, #entries do
+    local entry = normalize_entry(entries[index])
+    if entry and entry.path_key then
+      normalized_entries[#normalized_entries + 1] = entry
+    end
+  end
+
+  if #normalized_entries == 0 then
+    return false, 0
+  end
+
+  index_state.entries = normalized_entries
+  index_state.entry_map = {}
+  index_state.entry_count = #normalized_entries
+  index_state.last_rebuild_tick = nil
+  index_state.dirty = false
+  index_state.rebuilding = false
+  index_state.resolving_labels = false
+  index_state.labels_remaining = 0
+  index_state.job_revision = nil
+  index_state.pending_entries = nil
+  index_state.pending_entry_map = nil
+  index_state.pending_tasks = nil
+  index_state.job_cursor = 1
+  index_state.label_queue = nil
+  index_state.label_cursor = 1
+  index_state.priority_label_queue = nil
+  index_state.priority_label_set = nil
+  index_state.source = "prebuilt"
+
+  rebuild_entry_map(index_state)
+  return true, index_state.entry_count
+end
+
 function M.mark_index_dirty(player_index)
   local player_state = M.ensure_player_state(player_index)
   player_state.index.rebuild_revision = player_state.index.rebuild_revision + 1
@@ -191,6 +285,7 @@ function M.mark_index_dirty(player_index)
   player_state.index.label_cursor = 1
   player_state.index.priority_label_queue = nil
   player_state.index.priority_label_set = nil
+  player_state.index.source = "runtime"
 end
 
 function M.reset_ui(player_index)

@@ -1,0 +1,10 @@
+image:
+  repository: ghcr.io/galpodlipnik1/rbf-api
+  tag: "latest"
+
+service:
+  port: 8080
+
+ingress:
+  enabled: true
+  host: rbf-api.galpodlipnik.com

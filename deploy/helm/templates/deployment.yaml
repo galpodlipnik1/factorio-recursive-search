@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rbf-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rbf-api
+  template:
+    metadata:
+      labels:
+        app: rbf-api
+    spec:
+      containers:
+        - name: rbf-api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http

@@ -21,6 +21,37 @@ local function get_player(event)
   return game.get_player(event.player_index)
 end
 
+local function load_prebuilt_module()
+  local ok, cached = pcall(require, "__recursive-blueprint-finder__/generated/index")
+  if not ok or type(cached) ~= "table" then
+    return nil
+  end
+
+  return cached
+end
+
+local function try_load_prebuilt_index(player_index, force)
+  local player_state = state.ensure_player_state(player_index)
+  if not force and player_state.index.entry_count > 0 and player_state.index.dirty == false then
+    return false
+  end
+
+  local cached = load_prebuilt_module()
+  if not cached then
+    return false
+  end
+
+  local applied, count = state.apply_prebuilt_index(player_index, cached)
+  if applied then
+    logger.info("index.prebuilt-loaded", {
+      entries = count,
+      player_index = player_index
+    })
+  end
+
+  return applied
+end
+
 local function ensure_rebuild_started(player, force_rebuild)
   local player_state = state.ensure_player_state(player.index)
 
@@ -94,6 +125,9 @@ function M.on_init()
 
   for _, player in pairs(game.players) do
     state.ensure_player_state(player.index)
+    if not try_load_prebuilt_index(player.index, true) then
+      state.mark_index_dirty(player.index)
+    end
     ui.sync_shortcut(player)
   end
 end
@@ -106,7 +140,9 @@ function M.on_configuration_changed()
 
   for _, player in pairs(game.players) do
     state.ensure_player_state(player.index)
-    state.mark_index_dirty(player.index)
+    if not try_load_prebuilt_index(player.index, true) then
+      state.mark_index_dirty(player.index)
+    end
     ui.sync_shortcut(player)
   end
 end
@@ -119,7 +155,9 @@ function M.on_player_created(event)
 
   logger.player(player, "player.created")
   state.ensure_player_state(player.index)
-  state.mark_index_dirty(player.index)
+  if not try_load_prebuilt_index(player.index, true) then
+    state.mark_index_dirty(player.index)
+  end
   ui.sync_shortcut(player)
 end
 
@@ -131,6 +169,7 @@ function M.on_player_joined_game(event)
 
   logger.player(player, "player.joined")
   state.ensure_player_state(player.index)
+  try_load_prebuilt_index(player.index, false)
   ui.sync_shortcut(player)
 end
 
@@ -162,6 +201,11 @@ function M.on_toggle_hotkey(event)
     })
     ui.close(player)
     return
+  end
+
+  if player_state.index.dirty and player_state.index.entry_count == 0 then
+    try_load_prebuilt_index(player.index, false)
+    player_state = state.get_player_state(player.index)
   end
 
   if should_run_initial_rebuild(player_state) then

@@ -64,6 +64,11 @@ scripts/
     ├── placement.lua     ← exports a record and pastes it into the player cursor
     ├── resolver.lua      ← resolves a slot-path to a blueprint record
     └── util.lua          ← normalization, search text, sprite paths, misc helpers
+tooling/
+├── install-index.ps1    ← injects a prebuilt index into the installed mod zip
+├── package.ps1          ← creates a clean mod zip for release
+├── package.sh           ← bash equivalent of the release packager
+└── package-mod.ps1      ← packages directly into %APPDATA%\Factorio\mods
 ```
 
 ## How Indexing Works
