@@ -12,3 +12,4 @@ ingress:
   enabled: true
   className: nginx
   host: rbf-api.galpodlipnik.com
+  proxyBodySize: 100m

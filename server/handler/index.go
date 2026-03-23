@@ -8,7 +8,7 @@ import (
 	"rbf-api/parser"
 )
 
-const maxUploadSize = 64 << 20
+const maxUploadSize = 128 << 20
 
 func NewMux() *http.ServeMux {
 	mux := http.NewServeMux()
