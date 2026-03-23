@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - boss-of-convolution
+    paths-ignore:
+      - "deploy/helm/values.yaml"
+  workflow_dispatch:
 
 permissions:
   contents: write
