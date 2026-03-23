@@ -1,5 +1,8 @@
+-- Blueprint placement. Exports a blueprint record to a temp stack and pastes
+-- it into the player cursor via the clipboard.
+
 ---@diagnostic disable: undefined-global
-local logger = require("scripts.logger")
+local logger = require("scripts.lib.logger")
 
 local M = {}
 

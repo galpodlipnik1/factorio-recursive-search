@@ -1,3 +1,6 @@
+-- Path resolver. Traverses the player blueprint inventory by slot-index path
+-- to retrieve a specific blueprint or book record.
+
 local M = {}
 
 function M.resolve_record_by_path(player, path)

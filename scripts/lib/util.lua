@@ -1,3 +1,6 @@
+-- Shared utilities. String normalization, search-text construction, path-key
+-- encoding, sprite-path conversion, and misc helpers used across all modules.
+
 local M = {}
 
 function M.trim(value)
@@ -18,12 +21,21 @@ function M.normalize(value)
   return lowered:gsub("[%s\r\n\t]+", " ")
 end
 
-function M.build_search_text(name, description, breadcrumb)
-  return M.normalize(table.concat({
+function M.build_search_text(name, description, breadcrumb, tags)
+  local parts = {
     name or "",
     description or "",
     breadcrumb or ""
-  }, " "))
+  }
+
+  if tags then
+    for k, v in pairs(tags) do
+      parts[#parts + 1] = tostring(k)
+      parts[#parts + 1] = tostring(v)
+    end
+  end
+
+  return M.normalize(table.concat(parts, " "))
 end
 
 function M.copy_array(values)
@@ -44,6 +56,14 @@ function M.fallback_name_text(record_type)
   end
 
   return "[Unnamed Blueprint]"
+end
+
+function M.signal_to_sprite_path(signal)
+  if not signal or not signal.type or not signal.name then return nil end
+  local prefix = signal.type == "virtual" and "virtual-signal" or signal.type
+  local path = prefix .. "/" .. signal.name
+  if not helpers.is_valid_sprite_path(path) then return nil end
+  return path
 end
 
 function M.find_entry(entries, path_key)

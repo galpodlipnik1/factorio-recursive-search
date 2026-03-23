@@ -1,3 +1,6 @@
+-- Structured log helper. Writes tagged key=value events to the Factorio log,
+-- with an optional player context variant.
+
 local M = {}
 
 local function stringify(value)

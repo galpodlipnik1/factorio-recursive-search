@@ -1,4 +1,18 @@
 ---@diagnostic disable: undefined-global
+
+data.raw["gui-style"]["default"]["rbf_multiline_button"] = {
+  type = "button_style",
+  parent = "button",
+  single_line = false,
+  horizontally_stretchable = "on",
+  horizontal_align = "left",
+  font = "default",
+  top_padding = 6,
+  bottom_padding = 6,
+  left_padding = 10,
+  right_padding = 10,
+}
+
 data:extend({
   {
     type = "custom-input",

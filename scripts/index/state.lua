@@ -1,3 +1,6 @@
+-- Player state management. Owns the index and UI state tables stored in
+-- `storage`, and handles migration from older save formats.
+
 local M = {}
 
 local function new_player_state()
@@ -26,7 +29,8 @@ local function new_player_state()
       open = false,
       query = "",
       mode = "search",
-      browse_path_key = nil
+      browse_path_key = nil,
+      layout = "compact"
     }
   }
 end
@@ -87,6 +91,10 @@ local function normalize_entry(entry)
   entry.search_text = entry.search_text or ""
   entry.label_resolved = entry.label_resolved == true
   entry.child_path_keys = entry.child_path_keys or {}
+  -- icon_sprite: nil = not yet resolved, false = resolved (no custom icon), string = resolved (has icon)
+  if entry.icon_sprite == true then entry.icon_sprite = nil end
+  entry.entity_count = entry.entity_count or 0
+  entry.tags = entry.tags or {}
 
   return entry
 end
@@ -134,6 +142,7 @@ local function ensure_ui_shape(ui_state)
   ui_state.query = ui_state.query or ""
   ui_state.mode = ui_state.mode or "search"
   ui_state.browse_path_key = ui_state.browse_path_key
+  ui_state.layout = ui_state.layout or "compact"
 end
 
 local function normalize_player_state(player_state)

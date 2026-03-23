@@ -1,3 +1,6 @@
+-- Mod entry point. Registers all Factorio runtime event handlers and
+-- delegates them to scripts/events.lua.
+
 local events = require("scripts.events")
 
 script.on_init(events.on_init)
