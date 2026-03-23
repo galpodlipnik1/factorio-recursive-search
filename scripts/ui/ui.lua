@@ -57,6 +57,10 @@ local function status_state_text(index_state)
     return {"rbf.status-warming"}
   end
 
+  if index_state.source == "prebuilt" then
+    return {"rbf.status-prebuilt"}
+  end
+
   if index_state.dirty then
     return {"rbf.status-stale"}
   end

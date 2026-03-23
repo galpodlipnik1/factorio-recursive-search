@@ -12,6 +12,14 @@ local ui = require("scripts.ui.ui")
 local util = require("scripts.lib.util")
 
 local M = {}
+local prebuilt_load_ok, prebuilt_load_result = pcall(require, "__recursive-blueprint-finder__/generated/index")
+local prebuilt_module = prebuilt_load_ok and type(prebuilt_load_result) == "table" and prebuilt_load_result or nil
+local prebuilt_load_error = prebuilt_load_ok and nil or prebuilt_load_result
+local prebuilt_presence_logged = false
+local prebuilt_loaded_logged = false
+local prebuilt_error_logged = false
+local prebuilt_invalid_logged = false
+local prebuilt_missing_logged = false
 
 local function get_player(event)
   if not event.player_index then
@@ -22,29 +30,91 @@ local function get_player(event)
 end
 
 local function load_prebuilt_module()
-  local ok, cached = pcall(require, "__recursive-blueprint-finder__/generated/index")
-  if not ok or type(cached) ~= "table" then
+  if prebuilt_load_error then
+    if not prebuilt_error_logged then
+      logger.info("index.prebuilt-require-failed", {
+        error = prebuilt_load_error
+      })
+      prebuilt_error_logged = true
+    end
     return nil
   end
 
-  return cached
+  if type(prebuilt_module) ~= "table" then
+    if not prebuilt_invalid_logged then
+      logger.info("index.prebuilt-invalid-module", {
+        module_type = type(prebuilt_module)
+      })
+      prebuilt_invalid_logged = true
+    end
+    return nil
+  end
+
+  if not prebuilt_loaded_logged then
+    logger.info("index.prebuilt-module-loaded", {
+      entry_count = type(prebuilt_module.entries) == "table" and #prebuilt_module.entries or #prebuilt_module
+    })
+    prebuilt_loaded_logged = true
+  end
+  return prebuilt_module
+end
+
+local function has_prebuilt_index()
+  local available = prebuilt_module ~= nil
+  if not prebuilt_presence_logged then
+    logger.info("index.prebuilt-presence-checked", {
+      available = available
+    })
+    prebuilt_presence_logged = true
+  end
+  return available
 end
 
 local function try_load_prebuilt_index(player_index, force)
   local player_state = state.ensure_player_state(player_index)
-  if not force and player_state.index.entry_count > 0 and player_state.index.dirty == false then
+  if not force
+    and player_state.index.source == "prebuilt"
+    and player_state.index.entry_count > 0
+    and player_state.index.dirty == false then
+    logger.info("index.prebuilt-skip-already-active", {
+      dirty = player_state.index.dirty,
+      entries = player_state.index.entry_count,
+      force = force,
+      player_index = player_index,
+      source = player_state.index.source
+    })
     return false
   end
 
   local cached = load_prebuilt_module()
   if not cached then
+    if not prebuilt_missing_logged then
+      logger.info("index.prebuilt-missing", {
+        force = force,
+        player_index = player_index
+      })
+      prebuilt_missing_logged = true
+    end
     return false
   end
+  prebuilt_missing_logged = false
 
+  local previous_dirty = player_state.index.dirty
+  local previous_entries = player_state.index.entry_count
+  local previous_source = player_state.index.source
   local applied, count = state.apply_prebuilt_index(player_index, cached)
   if applied then
     logger.info("index.prebuilt-loaded", {
       entries = count,
+      force = force,
+      previous_dirty = previous_dirty,
+      previous_entries = previous_entries,
+      previous_source = previous_source,
+      player_index = player_index
+    })
+  else
+    logger.info("index.prebuilt-apply-failed", {
+      force = force,
       player_index = player_index
     })
   end
@@ -53,6 +123,13 @@ local function try_load_prebuilt_index(player_index, force)
 end
 
 local function ensure_rebuild_started(player, force_rebuild)
+  if has_prebuilt_index() then
+    logger.player(player, "index.rebuild-blocked-prebuilt-present", {
+      force = force_rebuild
+    })
+    return false
+  end
+
   local player_state = state.ensure_player_state(player.index)
 
   if force_rebuild then
@@ -63,6 +140,12 @@ local function ensure_rebuild_started(player, force_rebuild)
   end
 
   if player_state.index.rebuilding or not player_state.index.dirty then
+    logger.player(player, "index.rebuild-not-started", {
+      dirty = player_state.index.dirty,
+      force = force_rebuild,
+      rebuilding = player_state.index.rebuilding,
+      source = player_state.index.source
+    })
     return false
   end
 
@@ -120,7 +203,8 @@ end
 function M.on_init()
   state.ensure_globals()
   logger.info("lifecycle.on-init", {
-    players = #game.players
+    players = #game.players,
+    prebuilt_available = has_prebuilt_index()
   })
 
   for _, player in pairs(game.players) do
@@ -135,7 +219,8 @@ end
 function M.on_configuration_changed()
   state.ensure_globals()
   logger.info("lifecycle.on-configuration-changed", {
-    players = #game.players
+    players = #game.players,
+    prebuilt_available = has_prebuilt_index()
   })
 
   for _, player in pairs(game.players) do
@@ -180,6 +265,15 @@ function M.on_blueprint_related_change(event)
   end
 
   logger.player(player, "blueprints.changed")
+  if has_prebuilt_index() then
+    try_load_prebuilt_index(player.index, true)
+    local player_state = state.get_player_state(player.index)
+    if player_state.ui.open then
+      ui.refresh(player)
+    end
+    return
+  end
+
   state.mark_index_dirty(player.index)
 
   local player_state = state.get_player_state(player.index)
@@ -203,7 +297,19 @@ function M.on_toggle_hotkey(event)
     return
   end
 
-  if player_state.index.dirty and player_state.index.entry_count == 0 then
+  if has_prebuilt_index() and player_state.index.source ~= "prebuilt" then
+    logger.player(player, "ui.pre-open-load-prebuilt", {
+      current_dirty = player_state.index.dirty,
+      current_entries = player_state.index.entry_count,
+      current_source = player_state.index.source
+    })
+    try_load_prebuilt_index(player.index, false)
+    player_state = state.get_player_state(player.index)
+  elseif player_state.index.dirty then
+    logger.player(player, "ui.pre-open-dirty-index", {
+      current_entries = player_state.index.entry_count,
+      current_source = player_state.index.source
+    })
     try_load_prebuilt_index(player.index, false)
     player_state = state.get_player_state(player.index)
   end
@@ -215,8 +321,11 @@ function M.on_toggle_hotkey(event)
   end
 
   logger.player(player, "ui.toggle-open", {
+    dirty = player_state.index.dirty,
     source = "hotkey",
+    index_source = player_state.index.source,
     rebuilding = player_state.index.rebuilding,
+    resolving_labels = player_state.index.resolving_labels,
     entry_count = player_state.index.entry_count
   })
   ui.open(player)
@@ -237,6 +346,10 @@ function M.on_lua_shortcut(event)
 end
 
 function M.on_tick()
+  if has_prebuilt_index() then
+    return
+  end
+
   if not storage.players then
     return
   end
@@ -278,6 +391,11 @@ function M.on_gui_click(event)
 
   if element.name == ui.names.refresh then
     logger.player(player, "ui.refresh-clicked")
+    if has_prebuilt_index() then
+      try_load_prebuilt_index(player.index, true)
+      ui.refresh(player)
+      return
+    end
     local started = ensure_rebuild_started(player, true)
     if started or state.get_player_state(player.index).index.rebuilding then
       ui.refresh(player)
