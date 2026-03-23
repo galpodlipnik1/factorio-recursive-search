@@ -1,4 +1,7 @@
-local util = require("scripts.util")
+-- Search and filter engine. Provides ranked full-text query matching and
+-- direct children lookup for browse mode.
+
+local util = require("scripts.lib.util")
 
 local M = {}
 

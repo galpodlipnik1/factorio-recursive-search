@@ -1,8 +1,11 @@
+-- Blueprint index pipeline. Handles incremental rebuild (100 records/tick) and
+-- a two-phase warmup that resolves labels and custom icons via decoded temp stacks.
+
 ---@diagnostic disable: undefined-global
-local logger = require("scripts.logger")
-local resolver = require("scripts.resolver")
-local state = require("scripts.state")
-local util = require("scripts.util")
+local logger = require("scripts.lib.logger")
+local resolver = require("scripts.lib.resolver")
+local state = require("scripts.index.state")
+local util = require("scripts.lib.util")
 
 local M = {}
 local BUILD_BATCH_SIZE = 100
@@ -23,8 +26,8 @@ local function safe_destroy_inventory(inventory)
   end
 end
 
-local function build_search_text(name, description, breadcrumb)
-  return util.build_search_text(name, description, breadcrumb)
+local function build_search_text(name, description, breadcrumb, tags)
+  return util.build_search_text(name, description, breadcrumb, tags) ---@diagnostic disable-line: redundant-parameter
 end
 
 local function read_direct_label(record)
@@ -37,6 +40,25 @@ local function read_direct_label(record)
   end
 
   return util.trim(label)
+end
+
+local function read_icon_sprite_from_stack(stack)
+  -- LuaItemStack uses get_blueprint_icons(), not .icons
+  local ok, icons = pcall(function() return stack.get_blueprint_icons() end)
+  if not ok or not icons or not icons[1] or not icons[1].signal then return nil end
+  return util.signal_to_sprite_path(icons[1].signal)
+end
+
+local function read_tags(record)
+  if record.type ~= "blueprint" then return {} end
+  local ok, tags = pcall(function() return record.get_blueprint_tags() end)
+  return (ok and type(tags) == "table") and tags or {}
+end
+
+local function read_entity_count(record)
+  if record.type ~= "blueprint" then return 0 end
+  local ok, entities = pcall(function() return record.get_blueprint_entities() end)
+  return (ok and type(entities) == "table") and #entities or 0
 end
 
 local function description_name_fallback(record_type, description)
@@ -100,14 +122,12 @@ local function resolve_label_metadata(record, fallback_name, fallback_descriptio
     description = fallback_description or ""
   end
 
-  local direct_name = read_direct_label(record)
-  if direct_name ~= "" then
-    return direct_name, description
-  end
-
+  -- Always create temp stack: it's the only way to read custom blueprint icons.
+  -- Direct label check is done after, so we can fall back without a stack if export fails.
   local inventory, stack = create_temp_stack_from_record(record)
-  if not inventory then
-    return fallback_name, description
+  if not inventory or not stack then
+    local direct_name = read_direct_label(record)
+    return (direct_name ~= "" and direct_name or fallback_name), description, nil
   end
 
   local ok, label = pcall(function()
@@ -115,11 +135,15 @@ local function resolve_label_metadata(record, fallback_name, fallback_descriptio
   end)
   local name = ok and util.trim(label) or ""
   if name == "" then
+    name = read_direct_label(record)
+  end
+  if name == "" then
     name = fallback_name
   end
 
+  local icon_sprite = read_icon_sprite_from_stack(stack)
   safe_destroy_inventory(inventory)
-  return name, description
+  return name, description, icon_sprite
 end
 
 local function compute_breadcrumb(index_state, entry)
@@ -148,7 +172,7 @@ local function refresh_entry_search(entry, index_state)
   entry.search_name = util.normalize(entry.name)
   entry.search_description = util.normalize(entry.description)
   entry.search_breadcrumb = util.normalize(entry.breadcrumb)
-  entry.search_text = build_search_text(entry.name, entry.description, entry.breadcrumb)
+  entry.search_text = build_search_text(entry.name, entry.description, entry.breadcrumb, entry.tags)
 end
 
 local function clear_rebuild_job(index_state)
@@ -203,6 +227,9 @@ local function append_entry(index_state, task, record)
   local breadcrumbs = util.copy_array(task.breadcrumbs)
   breadcrumbs[#breadcrumbs + 1] = name
 
+  local tags = read_tags(record)
+  local entity_count = read_entity_count(record)
+
   local path_key = util.path_key(task.path)
   local entry = {
     path = task.path,
@@ -215,9 +242,12 @@ local function append_entry(index_state, task, record)
     search_name = util.normalize(name),
     search_description = util.normalize(description),
     search_breadcrumb = util.normalize(table.concat(breadcrumbs, " / ")),
-    search_text = build_search_text(name, description, table.concat(breadcrumbs, " / ")),
+    search_text = build_search_text(name, description, table.concat(breadcrumbs, " / "), tags),
     label_resolved = direct_name ~= "",
-    child_path_keys = {}
+    child_path_keys = {},
+    icon_sprite = nil,
+    entity_count = entity_count,
+    tags = tags
   }
 
   index_state.pending_entries[#index_state.pending_entries + 1] = entry
@@ -265,13 +295,17 @@ local function start_label_resolution(index_state)
 
   for index = 1, #index_state.entries do
     local entry = index_state.entries[index]
-    if not entry.label_resolved then
+    local needs_label = not entry.label_resolved
+    local needs_icon = entry.icon_sprite == nil
+    if needs_label or needs_icon then
       index_state.label_queue[#index_state.label_queue + 1] = entry.path_key
-      index_state.labels_remaining = index_state.labels_remaining + 1
+      if needs_label then
+        index_state.labels_remaining = index_state.labels_remaining + 1
+      end
     end
   end
 
-  if index_state.labels_remaining == 0 then
+  if #index_state.label_queue == 0 then
     clear_label_job(index_state)
   end
 end
@@ -288,7 +322,7 @@ end
 
 local function enqueue_priority_path(index_state, path_key)
   local entry = index_state.entry_map[path_key]
-  if not entry or entry.label_resolved then
+  if not entry or (entry.label_resolved and entry.icon_sprite ~= nil) then
     return
   end
 
@@ -306,7 +340,7 @@ local function next_label_path(index_state, allow_background)
     index_state.priority_label_set[path_key] = nil
 
     local entry = index_state.entry_map[path_key]
-    if entry and not entry.label_resolved then
+    if entry and (not entry.label_resolved or entry.icon_sprite == nil) then
       return path_key, true
     end
   end
@@ -320,7 +354,7 @@ local function next_label_path(index_state, allow_background)
     index_state.label_cursor = index_state.label_cursor + 1
 
     local entry = index_state.entry_map[path_key]
-    if entry and not entry.label_resolved then
+    if entry and (not entry.label_resolved or entry.icon_sprite == nil) then
       return path_key, false
     end
   end
@@ -330,25 +364,42 @@ end
 
 local function resolve_entry_label(player, index_state, path_key)
   local entry = index_state.entry_map[path_key]
-  if not entry or entry.label_resolved then
+  if not entry then return false end
+
+  -- Skip if both label and icon are already resolved (false = resolved with no custom icon)
+  if entry.label_resolved and entry.icon_sprite ~= nil then
     return false
   end
 
   local record = resolver.resolve_record_by_path(player, entry.path)
   if not is_readable_record(record) then
-    entry.label_resolved = true
-    index_state.labels_remaining = math.max(index_state.labels_remaining - 1, 0)
+    if not entry.label_resolved then
+      entry.label_resolved = true
+      index_state.labels_remaining = math.max(index_state.labels_remaining - 1, 0)
+    end
+    if entry.icon_sprite == nil then
+      entry.icon_sprite = false
+    end
     return false
   end
 
-  local name, description = resolve_label_metadata(record, entry.name, entry.description)
-  local changed = name ~= entry.name or description ~= entry.description
+  local name, description, icon_sprite = resolve_label_metadata(record, entry.name, entry.description)
+  local changed = false
 
-  entry.name = name
-  entry.description = description
-  entry.label_resolved = true
-  refresh_entry_search(entry, index_state)
-  index_state.labels_remaining = math.max(index_state.labels_remaining - 1, 0)
+  if not entry.label_resolved then
+    changed = name ~= entry.name or description ~= entry.description
+    entry.name = name
+    entry.description = description
+    entry.label_resolved = true
+    refresh_entry_search(entry, index_state)
+    index_state.labels_remaining = math.max(index_state.labels_remaining - 1, 0)
+  end
+
+  if entry.icon_sprite == nil then
+    local new_icon = icon_sprite or false  -- false = resolved, no custom icon
+    if new_icon ~= false then changed = true end
+    entry.icon_sprite = new_icon
+  end
 
   return changed
 end
@@ -475,7 +526,10 @@ function M.process_label_batch(player, max_records, allow_background)
     processed = processed + 1
   end
 
-  if index_state.resolving_labels and index_state.labels_remaining == 0 then
+  if index_state.resolving_labels
+    and index_state.labels_remaining == 0
+    and (not index_state.label_queue or index_state.label_cursor > #index_state.label_queue)
+    and (not index_state.priority_label_queue or #index_state.priority_label_queue == 0) then
     clear_label_job(index_state)
     logger.player(player, "index.label-warmup-finished")
   elseif index_state.resolving_labels then

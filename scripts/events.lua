@@ -1,12 +1,15 @@
+-- Event handler implementations. Orchestrates the indexer, UI, and placement
+-- modules in response to player actions and game lifecycle events.
+
 ---@diagnostic disable: undefined-global
-local indexer = require("scripts.indexer")
-local logger = require("scripts.logger")
-local placement = require("scripts.placement")
-local resolver = require("scripts.resolver")
-local search = require("scripts.search")
-local state = require("scripts.state")
-local ui = require("scripts.ui")
-local util = require("scripts.util")
+local indexer = require("scripts.index.indexer")
+local logger = require("scripts.lib.logger")
+local placement = require("scripts.lib.placement")
+local resolver = require("scripts.lib.resolver")
+local search = require("scripts.index.search")
+local state = require("scripts.index.state")
+local ui = require("scripts.ui.ui")
+local util = require("scripts.lib.util")
 
 local M = {}
 
@@ -235,6 +238,14 @@ function M.on_gui_click(event)
     if started or state.get_player_state(player.index).index.rebuilding then
       ui.refresh(player)
     end
+    return
+  end
+
+  if element.name == ui.names.layout_toggle then
+    local player_state = state.get_player_state(player.index)
+    player_state.ui.layout = player_state.ui.layout == "detailed" and "compact" or "detailed"
+    logger.player(player, "ui.layout-toggled", { layout = player_state.ui.layout })
+    ui.refresh(player)
     return
   end
 

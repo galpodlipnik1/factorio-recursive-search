@@ -1,7 +1,10 @@
-local indexer = require("scripts.indexer")
-local state = require("scripts.state")
-local search = require("scripts.search")
-local util = require("scripts.util")
+-- GUI builder and refresh logic. Constructs the search window, renders result
+-- rows with icons and metadata, and syncs UI state on every refresh.
+
+local indexer = require("scripts.index.indexer")
+local state = require("scripts.index.state")
+local search = require("scripts.index.search")
+local util = require("scripts.lib.util")
 
 local M = {}
 local LEGACY_TOP_BUTTON = "rbf_top_button"
@@ -11,6 +14,7 @@ M.names = {
   toolbar = "rbf_toolbar",
   query = "rbf_query",
   refresh = "rbf_refresh",
+  layout_toggle = "rbf_layout_toggle",
   close = "rbf_close",
   back = "rbf_back",
   status = "rbf_status",
@@ -98,42 +102,71 @@ local function entry_type_text(entry)
   return {"rbf.tag-blueprint"}
 end
 
-local function entry_button_caption(player_state, entry)
-  local caption = {
-    "",
-    entry_display_name(entry),
-    " [",
-    entry_type_text(entry),
-    "]",
-    "\n",
-    {"rbf.path-line", entry_breadcrumb(player_state, entry)}
-  }
+local FALLBACK_SPRITE = {
+  ["blueprint"] = "item/blueprint",
+  ["blueprint-book"] = "item/blueprint-book"
+}
 
+local function entry_icon_sprite(entry)
+  if entry.icon_sprite and entry.icon_sprite ~= false then
+    return entry.icon_sprite
+  end
+  return FALLBACK_SPRITE[entry.record_type] or "item/blueprint"
+end
+
+local function entity_count_suffix(entry)
+  if entry.record_type == "blueprint-book" or (entry.entity_count or 0) == 0 then return "" end
+  return " (" .. tostring(entry.entity_count) .. ")"
+end
+
+local function add_compact_row(scroll_pane, player_state, entry)
+  local action = entry.record_type == "blueprint-book" and "open-book" or "place-blueprint"
+  local type_label = entry.record_type == "blueprint-book" and "[Book]" or "[Blueprint]"
+  local icon_tag = "[img=" .. entry_icon_sprite(entry) .. "]"
+  local text = icon_tag .. " " .. entry_display_name(entry)
+      .. entity_count_suffix(entry) .. "  " .. type_label
+      .. "   " .. entry_breadcrumb(player_state, entry)
+
+  local btn = scroll_pane.add({
+    type = "button",
+    caption = text,
+    tags = { action = action, path_key = entry.path_key }
+  })
+  btn.style.horizontally_stretchable = true
+  btn.style.horizontal_align = "left"
+  btn.style.font = "default-small"
+  btn.style.top_padding = 0
+  btn.style.bottom_padding = 0
+  btn.style.left_padding = 8
+  btn.style.right_padding = 8
+  btn.style.height = 24
+end
+
+local function add_detailed_row(scroll_pane, player_state, entry)
+  local action = entry.record_type == "blueprint-book" and "open-book" or "place-blueprint"
+  local type_label = entry.record_type == "blueprint-book" and "[Book]" or "[Blueprint]"
+  local icon_tag = "[img=" .. entry_icon_sprite(entry) .. "]"
+  local text = icon_tag .. " " .. entry_display_name(entry)
+      .. entity_count_suffix(entry) .. "  " .. type_label
+      .. "\n    " .. entry_breadcrumb(player_state, entry)
   if entry.description ~= "" then
-    caption[#caption + 1] = "\n"
-    caption[#caption + 1] = {"rbf.description-line", entry.description}
+    text = text .. "\n    " .. entry.description
   end
 
-  return caption
+  scroll_pane.add({
+    type = "button",
+    style = "rbf_multiline_button",
+    caption = text,
+    tags = { action = action, path_key = entry.path_key }
+  })
 end
 
 local function add_result_row(scroll_pane, player_state, entry)
-  local action = entry.record_type == "blueprint-book" and "open-book" or "place-blueprint"
-  local button = scroll_pane.add({
-    type = "button",
-    caption = entry_button_caption(player_state, entry),
-    tags = {
-      action = action,
-      path_key = entry.path_key
-    }
-  })
-  button.style.horizontally_stretchable = true
-  button.style.horizontal_align = "left"
-  button.style.font = "default"
-  button.style.top_padding = 8
-  button.style.bottom_padding = 8
-  button.style.left_padding = 10
-  button.style.right_padding = 10
+  if player_state.ui.layout == "detailed" then
+    add_detailed_row(scroll_pane, player_state, entry)
+  else
+    add_compact_row(scroll_pane, player_state, entry)
+  end
 end
 
 function M.sync_shortcut(player)
@@ -188,6 +221,14 @@ function M.build(player)
     sprite = "utility/refresh",
     style = "frame_action_button",
     tooltip = {"rbf.refresh"}
+  })
+
+  titlebar.add({
+    type = "sprite-button",
+    name = M.names.layout_toggle,
+    sprite = "utility/expand",
+    style = "frame_action_button",
+    tooltip = {"rbf.layout-toggle-tooltip"}
   })
 
   titlebar.add({
@@ -253,6 +294,12 @@ function M.open(player)
   player.opened = frame
 
   M.refresh(player)
+
+  local toolbar = frame[M.names.toolbar]
+  local query_field = toolbar and toolbar[M.names.query]
+  if query_field and query_field.valid then
+    query_field.focus()
+  end
 end
 
 function M.close(player)
@@ -282,6 +329,13 @@ function M.refresh(player)
   end
 
   back.visible = player_state.ui.mode == "browse"
+
+  local layout_toggle = frame[M.names.layout_toggle]
+  if layout_toggle then
+    layout_toggle.sprite = player_state.ui.layout == "detailed"
+      and "utility/collapse"
+      or "utility/expand"
+  end
 
   frame[M.names.status].caption = {
     "rbf.status-line",
@@ -329,8 +383,25 @@ function M.refresh(player)
     return
   end
 
+  local last_parent = nil
   for index = 1, #model.matches do
-    add_result_row(scroll_pane, player_state, model.matches[index])
+    local entry = model.matches[index]
+
+    if player_state.ui.layout ~= "detailed" then
+      local parent_key = entry.parent_path_key
+      if parent_key ~= last_parent then
+        local parent_entry = player_state.index.entry_map[parent_key]
+        if parent_entry then
+          local header = scroll_pane.add({ type = "label", caption = parent_entry.name })
+          header.style.font = "default-bold"
+          header.style.top_padding = 4
+          header.style.left_padding = 4
+        end
+        last_parent = parent_key
+      end
+    end
+
+    add_result_row(scroll_pane, player_state, entry)
   end
 end
 
