@@ -4,6 +4,7 @@ kind: Ingress
 metadata:
   name: rbf-api
 spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
       http:
