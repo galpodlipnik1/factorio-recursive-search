@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/galpodlipnik1/rbf-api
-  tag: "latest"
+  tag: "9ed1099"
 
 service:
   port: 8080
