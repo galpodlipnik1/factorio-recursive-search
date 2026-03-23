@@ -12,6 +12,12 @@ spec:
       labels:
         app: rbf-api
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
       containers:
         - name: rbf-api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
