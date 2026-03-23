@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/galpodlipnik1/rbf-api
-  tag: "7839a37"
+  tag: "6b69c4e"
 
 imagePullSecrets:
   - ghcr-pull
