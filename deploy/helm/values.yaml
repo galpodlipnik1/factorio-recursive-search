@@ -3,7 +3,7 @@ image:
   tag: "c346454"
 
 imagePullSecrets:
-  - ghcr-creds
+  - ghcr-pull
 
 service:
   port: 8080
