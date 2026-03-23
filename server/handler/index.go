@@ -45,17 +45,13 @@ func index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exportStrings := parser.ExtractBlueprintStrings(data)
-	if len(exportStrings) == 0 {
-		http.Error(w, "no valid blueprint strings found in upload", http.StatusUnprocessableEntity)
-		return
-	}
-
-	module, entryCount, err := parser.BuildModule(exportStrings)
+	entries, err := parser.ParseBlueprintLibrary(data)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to build index: %v", err), http.StatusUnprocessableEntity)
 		return
 	}
+	module := parser.RenderLuaModule(entries)
+	entryCount := len(entries)
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="index.lua"`)
