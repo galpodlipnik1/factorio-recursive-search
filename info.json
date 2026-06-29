@@ -1,9 +1,9 @@
 {
-  "name": "recursive-blueprint-finder",
-  "version": "0.1.2",
-  "title": "Recursive Blueprint Finder",
+  "name": "factorio-recursive-search",
+  "version": "0.1.3",
+  "title": "Factorio Recursive Search",
   "author": "Gal",
-  "factorio_version": "2.0",
-  "dependencies": ["base >= 2.0.0"],
+  "factorio_version": "2.1",
+  "dependencies": ["base >= 2.1.0"],
   "description": "Recursive search UI for blueprint libraries."
 }
