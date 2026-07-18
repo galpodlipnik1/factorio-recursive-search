@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $infoPath = Join-Path $repoRoot 'info.json'
+$generatedIndex = Join-Path $repoRoot 'generated\index.lua'
 
 if (-not (Test-Path -LiteralPath $infoPath)) {
     throw "Missing info.json at '$infoPath'."
@@ -19,24 +20,34 @@ if ([string]::IsNullOrWhiteSpace($info.name) -or [string]::IsNullOrWhiteSpace($i
     throw "info.json must define non-empty 'name' and 'version' fields."
 }
 
+if (-not (Test-Path -LiteralPath $generatedIndex -PathType Leaf)) {
+    throw "Missing prebuilt index at '$generatedIndex'. Start the API and run tooling\prebuild-index.ps1 before packaging."
+}
+
 $packageName = '{0}_{1}' -f $info.name, $info.version
 $modsDir = Join-Path $env:APPDATA 'Factorio\mods'
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('factorio-mod-package-' + [System.Guid]::NewGuid().ToString('N'))
 $stageRoot = Join-Path $tempRoot $packageName
 $zipPath = Join-Path $tempRoot ($packageName + '.zip')
 $destinationZip = Join-Path $modsDir ($packageName + '.zip')
+$excludedNames = @(
+    '.git',
+    '.github',
+    '.gitignore',
+    '.gitkeep',
+    '.luarc.json',
+    '.vscode',
+    'deploy',
+    'server',
+    'tooling'
+)
 
 New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $modsDir -Force | Out-Null
 
 try {
-    Get-ChildItem -LiteralPath $repoRoot -Force | Where-Object { $_.Name -notin @('.git', 'server', 'deploy', '.github', 'tooling') -and $_.Name -notlike '*.zip' } | ForEach-Object {
+    Get-ChildItem -LiteralPath $repoRoot -Force | Where-Object { $_.Name -notin $excludedNames -and $_.Name -notlike '*.zip' } | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $stageRoot -Recurse -Force
-    }
-
-    $generatedIndex = Join-Path $stageRoot 'generated\index.lua'
-    if (Test-Path -LiteralPath $generatedIndex) {
-        Remove-Item -LiteralPath $generatedIndex -Force
     }
 
     if (Test-Path -LiteralPath $zipPath) {

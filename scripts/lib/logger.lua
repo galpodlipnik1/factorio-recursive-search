@@ -2,9 +2,22 @@
 -- with an optional player context variant.
 
 local M = {}
+local MAX_TABLE_DEPTH = 2
+local MAX_TABLE_ITEMS = 8
 
-local function stringify(value)
+local function safe_tostring(value)
+  local ok, text = pcall(tostring, value)
+  if ok then
+    return text
+  end
+
+  return "<unprintable>"
+end
+
+local function stringify(value, depth, seen)
   local value_type = type(value)
+  depth = depth or 0
+  seen = seen or {}
 
   if value_type == "nil" then
     return "nil"
@@ -18,7 +31,36 @@ local function stringify(value)
     return value
   end
 
-  return "<" .. value_type .. ">"
+  if value_type == "table" then
+    if seen[value] then
+      return "<cycle>"
+    end
+
+    if depth >= MAX_TABLE_DEPTH then
+      return "<table>"
+    end
+
+    seen[value] = true
+
+    local parts = {}
+    local count = 0
+    for key, nested in pairs(value) do
+      count = count + 1
+      if count > MAX_TABLE_ITEMS then
+        parts[#parts + 1] = "..."
+        break
+      end
+
+      parts[#parts + 1] = safe_tostring(key) .. "=" .. stringify(nested, depth + 1, seen)
+    end
+
+    table.sort(parts)
+    seen[value] = nil
+
+    return "{" .. table.concat(parts, ",") .. "}"
+  end
+
+  return "<" .. value_type .. ":" .. safe_tostring(value) .. ">"
 end
 
 local function serialize_fields(fields)

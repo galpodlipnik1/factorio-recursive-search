@@ -5,6 +5,13 @@ local util = require("scripts.lib.util")
 
 local M = {}
 
+local RECORD_TYPE_ORDER = {
+  ["blueprint-book"] = 1,
+  ["blueprint"] = 2,
+  ["deconstruction-planner"] = 3,
+  ["upgrade-planner"] = 4
+}
+
 local function rank_entry(entry, query)
   if entry.search_name == query then
     return 1
@@ -88,7 +95,8 @@ function M.children(entries, parent_path_key, max_results)
 
   table.sort(matches, function(left, right)
     if left.record_type ~= right.record_type then
-      return left.record_type == "blueprint-book"
+      return (RECORD_TYPE_ORDER[left.record_type] or 99)
+        < (RECORD_TYPE_ORDER[right.record_type] or 99)
     end
 
     if left.name ~= right.name then

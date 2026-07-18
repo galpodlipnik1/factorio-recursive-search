@@ -103,38 +103,78 @@ local function entry_type_text(entry)
     return {"rbf.tag-book"}
   end
 
+  if entry.record_type == "deconstruction-planner" then
+    return {"rbf.tag-deconstruction-planner"}
+  end
+
+  if entry.record_type == "upgrade-planner" then
+    return {"rbf.tag-upgrade-planner"}
+  end
+
   return {"rbf.tag-blueprint"}
 end
 
 local FALLBACK_SPRITE = {
   ["blueprint"] = "item/blueprint",
-  ["blueprint-book"] = "item/blueprint-book"
+  ["blueprint-book"] = "item/blueprint-book",
+  ["deconstruction-planner"] = "item/deconstruction-planner",
+  ["upgrade-planner"] = "item/upgrade-planner"
 }
 
 local function entry_icon_sprite(entry)
-  if entry.icon_sprite and entry.icon_sprite ~= false then
+  if entry.icon_sprite
+    and entry.icon_sprite ~= false
+    and helpers.is_valid_sprite_path(entry.icon_sprite) then
     return entry.icon_sprite
   end
   return FALLBACK_SPRITE[entry.record_type] or "item/blueprint"
 end
 
 local function entity_count_suffix(entry)
-  if entry.record_type == "blueprint-book" or (entry.entity_count or 0) == 0 then return "" end
+  if entry.record_type ~= "blueprint" or (entry.entity_count or 0) == 0 then return "" end
   return " (" .. tostring(entry.entity_count) .. ")"
 end
 
-local function add_compact_row(scroll_pane, player_state, entry)
-  local action = entry.record_type == "blueprint-book" and "open-book" or "place-blueprint"
-  local type_label = entry.record_type == "blueprint-book" and "[Book]" or "[Blueprint]"
-  local icon_tag = "[img=" .. entry_icon_sprite(entry) .. "]"
-  local text = icon_tag .. " " .. entry_display_name(entry)
-      .. entity_count_suffix(entry) .. "  " .. type_label
-      .. "   " .. entry_breadcrumb(player_state, entry)
+local function entry_action(entry)
+  return entry.record_type == "blueprint-book" and "open-book" or "place-record"
+end
 
+local function compact_caption(player_state, entry)
+  return {
+    "",
+    "[img=" .. entry_icon_sprite(entry) .. "] ",
+    entry_display_name(entry),
+    entity_count_suffix(entry),
+    "  [",
+    entry_type_text(entry),
+    "]   ",
+    entry_breadcrumb(player_state, entry)
+  }
+end
+
+local function detailed_caption(player_state, entry)
+  local caption = {
+    "",
+    "[img=" .. entry_icon_sprite(entry) .. "] ",
+    entry_display_name(entry),
+    entity_count_suffix(entry),
+    "  [",
+    entry_type_text(entry),
+    "]\n    ",
+    entry_breadcrumb(player_state, entry)
+  }
+  if entry.description ~= "" then
+    caption[#caption + 1] = "\n    "
+    caption[#caption + 1] = entry.description
+  end
+  return caption
+end
+
+local function add_compact_row(scroll_pane, player_state, entry)
   local btn = scroll_pane.add({
     type = "button",
-    caption = text,
-    tags = { action = action, path_key = entry.path_key }
+    caption = compact_caption(player_state, entry),
+    tags = { action = entry_action(entry), path_key = entry.path_key }
   })
   btn.style.horizontally_stretchable = true
   btn.style.horizontal_align = "left"
@@ -147,21 +187,11 @@ local function add_compact_row(scroll_pane, player_state, entry)
 end
 
 local function add_detailed_row(scroll_pane, player_state, entry)
-  local action = entry.record_type == "blueprint-book" and "open-book" or "place-blueprint"
-  local type_label = entry.record_type == "blueprint-book" and "[Book]" or "[Blueprint]"
-  local icon_tag = "[img=" .. entry_icon_sprite(entry) .. "]"
-  local text = icon_tag .. " " .. entry_display_name(entry)
-      .. entity_count_suffix(entry) .. "  " .. type_label
-      .. "\n    " .. entry_breadcrumb(player_state, entry)
-  if entry.description ~= "" then
-    text = text .. "\n    " .. entry.description
-  end
-
   scroll_pane.add({
     type = "button",
     style = "rbf_multiline_button",
-    caption = text,
-    tags = { action = action, path_key = entry.path_key }
+    caption = detailed_caption(player_state, entry),
+    tags = { action = entry_action(entry), path_key = entry.path_key }
   })
 end
 
@@ -355,11 +385,11 @@ function M.refresh(player)
   scroll_pane.clear()
 
   if player_state.index.rebuilding then
-    scroll_pane.add({
+    local rebuilding_label = scroll_pane.add({
       type = "label",
       caption = {"rbf.indexing"}
     })
-    return
+    rebuilding_label.style.bottom_padding = 8
   end
 
   local normalized_query = util.normalize(player_state.ui.query)

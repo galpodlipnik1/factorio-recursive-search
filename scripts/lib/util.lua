@@ -21,18 +21,54 @@ function M.normalize(value)
   return lowered:gsub("[%s\r\n\t]+", " ")
 end
 
-function M.build_search_text(name, description, breadcrumb, tags)
+local function sorted_keys(values)
+  local keys = {}
+  for key in pairs(values) do
+    keys[#keys + 1] = key
+  end
+  table.sort(keys, function(left, right)
+    return tostring(left) < tostring(right)
+  end)
+  return keys
+end
+
+local function append_search_values(parts, value, seen)
+  if value == nil then
+    return
+  end
+
+  if type(value) ~= "table" then
+    parts[#parts + 1] = tostring(value)
+    return
+  end
+
+  if seen[value] then
+    return
+  end
+  seen[value] = true
+
+  local keys = sorted_keys(value)
+  for index = 1, #keys do
+    local key = keys[index]
+    if type(key) ~= "number" then
+      parts[#parts + 1] = tostring(key)
+    end
+    append_search_values(parts, value[key], seen)
+  end
+
+  seen[value] = nil
+end
+
+function M.build_search_text(name, description, breadcrumb, ...)
   local parts = {
     name or "",
     description or "",
     breadcrumb or ""
   }
 
-  if tags then
-    for k, v in pairs(tags) do
-      parts[#parts + 1] = tostring(k)
-      parts[#parts + 1] = tostring(v)
-    end
+  local seen = {}
+  for index = 1, select("#", ...) do
+    append_search_values(parts, select(index, ...), seen)
   end
 
   return M.normalize(table.concat(parts, " "))
@@ -55,12 +91,23 @@ function M.fallback_name_text(record_type)
     return "[Unnamed Book]"
   end
 
+  if record_type == "deconstruction-planner" then
+    return "[Unnamed Deconstruction Planner]"
+  end
+
+  if record_type == "upgrade-planner" then
+    return "[Unnamed Upgrade Planner]"
+  end
+
   return "[Unnamed Blueprint]"
 end
 
 function M.signal_to_sprite_path(signal)
-  if not signal or not signal.type or not signal.name then return nil end
-  local prefix = signal.type == "virtual" and "virtual-signal" or signal.type
+  if not signal or not signal.name then return nil end
+  -- Factorio omits SignalID.type when reading item signals. Treat the absent
+  -- value as the documented item default so ordinary blueprint icons resolve.
+  local signal_type = signal.type or "item"
+  local prefix = signal_type == "virtual" and "virtual-signal" or signal_type
   local path = prefix .. "/" .. signal.name
   if not helpers.is_valid_sprite_path(path) then return nil end
   return path

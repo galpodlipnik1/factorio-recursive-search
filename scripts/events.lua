@@ -12,9 +12,15 @@ local ui = require("scripts.ui.ui")
 local util = require("scripts.lib.util")
 
 local M = {}
-local prebuilt_load_ok, prebuilt_load_result = pcall(require, "__recursive-blueprint-finder__/generated/index")
-local prebuilt_module = prebuilt_load_ok and type(prebuilt_load_result) == "table" and prebuilt_load_result or nil
-local prebuilt_load_error = prebuilt_load_ok and nil or prebuilt_load_result
+local PREBUILT_MODULE_NAMES = {
+  "generated.index",
+  "__recursive-blueprint-finder__/generated/index",
+  "__recursive-blueprint-finder__.generated.index"
+}
+
+local prebuilt_module = nil
+local prebuilt_load_name = nil
+local prebuilt_load_error = nil
 local prebuilt_presence_logged = false
 local prebuilt_loaded_logged = false
 local prebuilt_error_logged = false
@@ -27,6 +33,31 @@ local function get_player(event)
   end
 
   return game.get_player(event.player_index)
+end
+
+do
+  local failures = {}
+  for index = 1, #PREBUILT_MODULE_NAMES do
+    local module_name = PREBUILT_MODULE_NAMES[index]
+    local ok, result = pcall(require, module_name)
+    if ok and type(result) == "table" then
+      prebuilt_module = result
+      prebuilt_load_name = module_name
+      prebuilt_load_error = nil
+      break
+    end
+
+    failures[#failures + 1] = {
+      module_name = module_name,
+      ok = ok,
+      result = result,
+      result_type = type(result)
+    }
+  end
+
+  if not prebuilt_module then
+    prebuilt_load_error = failures
+  end
 end
 
 local function load_prebuilt_module()
@@ -52,7 +83,8 @@ local function load_prebuilt_module()
 
   if not prebuilt_loaded_logged then
     logger.info("index.prebuilt-module-loaded", {
-      entry_count = type(prebuilt_module.entries) == "table" and #prebuilt_module.entries or #prebuilt_module
+      entry_count = type(prebuilt_module.entries) == "table" and #prebuilt_module.entries or #prebuilt_module,
+      module_name = prebuilt_load_name
     })
     prebuilt_loaded_logged = true
   end
@@ -60,7 +92,7 @@ local function load_prebuilt_module()
 end
 
 local function has_prebuilt_index()
-  local available = prebuilt_module ~= nil
+  local available = load_prebuilt_module() ~= nil
   if not prebuilt_presence_logged then
     logger.info("index.prebuilt-presence-checked", {
       available = available
@@ -72,9 +104,15 @@ end
 
 local function try_load_prebuilt_index(player_index, force)
   local player_state = state.ensure_player_state(player_index)
+  if player_state.index.prefer_runtime then
+    logger.info("index.prebuilt-skip-runtime-preferred", {
+      force = force,
+      player_index = player_index
+    })
+    return false
+  end
   if not force
     and player_state.index.source == "prebuilt"
-    and player_state.index.entry_count > 0
     and player_state.index.dirty == false then
     logger.info("index.prebuilt-skip-already-active", {
       dirty = player_state.index.dirty,
@@ -113,6 +151,7 @@ local function try_load_prebuilt_index(player_index, force)
       player_index = player_index
     })
   else
+    state.request_runtime_index(player_index)
     logger.info("index.prebuilt-apply-failed", {
       force = force,
       player_index = player_index
@@ -123,14 +162,13 @@ local function try_load_prebuilt_index(player_index, force)
 end
 
 local function ensure_rebuild_started(player, force_rebuild)
-  if has_prebuilt_index() then
+  local player_state = state.ensure_player_state(player.index)
+  if has_prebuilt_index() and not player_state.index.prefer_runtime then
     logger.player(player, "index.rebuild-blocked-prebuilt-present", {
       force = force_rebuild
     })
     return false
   end
-
-  local player_state = state.ensure_player_state(player.index)
 
   if force_rebuild then
     logger.player(player, "index.rebuild-requested", {
@@ -172,13 +210,31 @@ local function handle_entry_action(player, entry)
     return
   end
 
+  if not entry.path or #entry.path == 0 then
+    logger.player(player, "action.unresolvable-prebuilt-entry", {
+      path_key = entry.path_key
+    })
+    state.request_runtime_index(player.index)
+    local started = ensure_rebuild_started(player, true)
+    if started or state.get_player_state(player.index).index.rebuilding then
+      player.print({"rbf.select-runtime-rebuild"})
+    else
+      player.print({"rbf.select-unavailable"})
+    end
+    ui.refresh(player)
+    return
+  end
+
   local record = resolver.resolve_record_by_path(player, entry.path)
-  if not record then
+  if not record or record.type ~= entry.record_type then
     logger.player(player, "action.resolve-failed", {
+      actual_record_type = record and record.type or nil,
+      expected_record_type = entry.record_type,
       path_key = entry.path_key
     })
     player.print({"rbf.select-failed"})
-    state.mark_index_dirty(player.index)
+    state.request_runtime_index(player.index)
+    ensure_rebuild_started(player, false)
     ui.refresh(player)
     return
   end
@@ -189,7 +245,8 @@ local function handle_entry_action(player, entry)
       path_key = entry.path_key
     })
     player.print({"rbf.select-failed"})
-    state.mark_index_dirty(player.index)
+    state.request_runtime_index(player.index)
+    ensure_rebuild_started(player, false)
     ui.refresh(player)
     return
   end
@@ -265,16 +322,10 @@ function M.on_blueprint_related_change(event)
   end
 
   logger.player(player, "blueprints.changed")
-  if has_prebuilt_index() then
-    try_load_prebuilt_index(player.index, true)
-    local player_state = state.get_player_state(player.index)
-    if player_state.ui.open then
-      ui.refresh(player)
-    end
-    return
-  end
-
-  state.mark_index_dirty(player.index)
+  -- A packaged index is a point-in-time snapshot. Once the player's library
+  -- changes, only a live rebuild can preserve path-to-record identity.
+  state.request_runtime_index(player.index)
+  ensure_rebuild_started(player, false)
 
   local player_state = state.get_player_state(player.index)
   if player_state.ui.open then
@@ -297,7 +348,10 @@ function M.on_toggle_hotkey(event)
     return
   end
 
-  if has_prebuilt_index() and player_state.index.source ~= "prebuilt" then
+  if has_prebuilt_index()
+    and player_state.index.source ~= "prebuilt"
+    and not player_state.index.prefer_runtime
+    and not player_state.index.rebuilding then
     logger.player(player, "ui.pre-open-load-prebuilt", {
       current_dirty = player_state.index.dirty,
       current_entries = player_state.index.entry_count,
@@ -306,12 +360,14 @@ function M.on_toggle_hotkey(event)
     try_load_prebuilt_index(player.index, false)
     player_state = state.get_player_state(player.index)
   elseif player_state.index.dirty then
-    logger.player(player, "ui.pre-open-dirty-index", {
-      current_entries = player_state.index.entry_count,
-      current_source = player_state.index.source
-    })
-    try_load_prebuilt_index(player.index, false)
-    player_state = state.get_player_state(player.index)
+    if not player_state.index.prefer_runtime then
+      logger.player(player, "ui.pre-open-dirty-index", {
+        current_entries = player_state.index.entry_count,
+        current_source = player_state.index.source
+      })
+      try_load_prebuilt_index(player.index, false)
+      player_state = state.get_player_state(player.index)
+    end
   end
 
   if should_run_initial_rebuild(player_state) then
@@ -346,10 +402,6 @@ function M.on_lua_shortcut(event)
 end
 
 function M.on_tick()
-  if has_prebuilt_index() then
-    return
-  end
-
   if not storage.players then
     return
   end
@@ -362,12 +414,17 @@ function M.on_tick()
         indexer.process_rebuild_batch(player)
 
         if player_state.ui.open and was_rebuilding and not player_state.index.rebuilding then
+          if player_state.index.prefer_runtime then
+            player.print({"rbf.runtime-ready"})
+          end
           ui.refresh(player)
         end
       elseif player_state.ui.open then
         local query = util.normalize(player_state.ui.query)
         local allow_background = player_state.ui.mode == "browse" or query ~= ""
-        if indexer.process_label_batch(player, nil, allow_background) then
+        local preview_changed = indexer.process_preview_icon_batch(player)
+        local metadata_changed = indexer.process_label_batch(player, nil, allow_background)
+        if preview_changed or metadata_changed then
           ui.refresh(player)
         end
       end
@@ -391,12 +448,8 @@ function M.on_gui_click(event)
 
   if element.name == ui.names.refresh then
     logger.player(player, "ui.refresh-clicked")
-    if has_prebuilt_index() then
-      try_load_prebuilt_index(player.index, true)
-      ui.refresh(player)
-      return
-    end
-    local started = ensure_rebuild_started(player, true)
+    state.request_runtime_index(player.index)
+    local started = ensure_rebuild_started(player, false)
     if started or state.get_player_state(player.index).index.rebuilding then
       ui.refresh(player)
     end
@@ -450,7 +503,8 @@ function M.on_gui_click(event)
       path_key = path_key
     })
     player.print({"rbf.select-failed"})
-    state.mark_index_dirty(player.index)
+    state.request_runtime_index(player.index)
+    ensure_rebuild_started(player, false)
     ui.refresh(player)
     return
   end

@@ -1,10 +1,16 @@
--- Blueprint placement. Exports a blueprint record to a temp stack and pastes
--- it into the player cursor via the clipboard.
+-- Record placement. Exports a blueprint or planner record to a temp stack and
+-- pastes it into the player cursor via the clipboard.
 
 ---@diagnostic disable: undefined-global
 local logger = require("scripts.lib.logger")
 
 local M = {}
+
+local PLACEABLE_RECORD_TYPES = {
+  ["blueprint"] = true,
+  ["deconstruction-planner"] = true,
+  ["upgrade-planner"] = true
+}
 
 local function destroy_inventory(inventory)
   if inventory and inventory.valid then
@@ -21,7 +27,7 @@ function M.place_record(player, record)
     return false
   end
 
-  if record.type ~= "blueprint" then
+  if not PLACEABLE_RECORD_TYPES[record.type] then
     logger.player(player, "placement.unsupported-record-type", {
       record_type = record.type
     })
@@ -33,8 +39,10 @@ function M.place_record(player, record)
     return false
   end
 
-  local export_string = record.export_record()
-  if not export_string or export_string == "" then
+  local export_ok, export_string = pcall(function()
+    return record.export_record()
+  end)
+  if not export_ok or not export_string or export_string == "" then
     logger.player(player, "placement.export-missing")
     return false
   end

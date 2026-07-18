@@ -13,3 +13,11 @@ ingress:
   className: nginx
   host: rbf-api.galpodlipnik.com
   proxyBodySize: 100m
+
+rateLimit:
+  install:
+    requestsPerMinute: 10
+    burst: 3
+  index:
+    requestsPerMinute: 5
+    burst: 2

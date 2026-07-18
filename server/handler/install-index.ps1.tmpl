@@ -1,19 +1,8 @@
-param(
-    [string]$ApiUrl
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 
-$defaultApiUrl = 'https://rbf-api.galpodlipnik.com/index'
-$resolvedApiUrl = if ($ApiUrl) {
-    $ApiUrl
-} elseif ($env:RBF_API_URL) {
-    $env:RBF_API_URL
-} else {
-    $defaultApiUrl
-}
+$resolvedApiUrl = '__DEFAULT_API_URL__'
 
 $datPath = Join-Path $env:APPDATA 'Factorio\blueprint-storage-2.dat'
 if (-not (Test-Path -LiteralPath $datPath)) {
