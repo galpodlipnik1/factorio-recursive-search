@@ -8,4 +8,4 @@ require (
 	golang.org/x/time v0.15.0
 )
 
-replace github.com/galpodlipnik1/factorio-blueprint-decoder => C:/Users/Gal/Desktop/Programming/factorio-blueprint-decoder
+//replace github.com/galpodlipnik1/factorio-blueprint-decoder => C:/Users/Gal/Desktop/Programming/factorio-blueprint-decoder
